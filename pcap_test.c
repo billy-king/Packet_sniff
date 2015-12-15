@@ -18,6 +18,11 @@
 #define Promiscuous 1
 #define TIME_OUT 1000 //ms
 
+int ini_seq = 1;
+int ini_ack = 1;
+unsigned int seq = 0 , ack = 0;
+int pre_window = 0;
+
 void print_ip(int ip)
 {
     unsigned char bytes[4];
@@ -28,8 +33,7 @@ void print_ip(int ip)
     printf("%d.%d.%d.%d\n", bytes[3], bytes[2], bytes[1], bytes[0]);
 }
 void printf_ethernet_header(const u_char *pktdata){
-/*struct ether_header
-  struct ether_header{
+/*struct ether_header{
   u_char  ether_dhost; //[6]Destination MAC address.
 
   u_char  ether_shost; //[6]  Source MAC address.
@@ -59,8 +63,7 @@ void printf_ethernet_header(const u_char *pktdata){
 }
 
 void printf_ip_header(const u_char *pktdata){
-/*struct iphdr
-  struct iphdr{
+/*struct iphdr{
   #if __BYTE_ORDER == __LITTLE_ENDIAN
       unsigned int ihl:4; header length
       unsigned int version:4;
@@ -126,36 +129,61 @@ void printf_tcp_header(const u_char *pktdata){
 
   tcph=(struct tcphdr*)(pktdata + iphdrlen + sizeof(struct ethhdr));
 
-  printf_ip_header(pktdata);
+  //printf_ip_header(pktdata);
 
-  printf("\n\n***********************TCP Packet*************************\n");
+  //printf("\n\n***********************TCP Packet*************************\n");
+  // if(ntohs(tcph->source) == 5001){
+  //   printf("   |-Sequence Number    : %u\n",ntohl(tcph->seq));
+  //   printf("   |-Acknowledge Number : %u\n",ntohl(tcph->ack_seq));
+  //   printf("   |-Acknowledgement Flag : %d\n",(unsigned int)tcph->ack);
+  //   printf("   |-Source Port      : %u\n",ntohs(tcph->source));
+  //   printf("   |-Window         : %d\n",ntohs(tcph->window));
+  // }
   printf("\n");
   printf("TCP Header\n");
-  printf("   |-Source Port      : %u\n",ntohs(tcph->source));
-  printf("   |-Destination Port : %u\n",ntohs(tcph->dest));
-  printf("   |-Sequence Number    : %u\n",ntohl(tcph->seq));
-  printf("   |-Acknowledge Number : %u\n",ntohl(tcph->ack_seq));
-  printf("   |-Header Length      : %d DWORDS or %d BYTES\n" ,(unsigned int)tcph->doff,(unsigned int)tcph->doff*4);
-  //printf("   |-CWR Flag : %d\n",(unsigned int)tcph->cwr);
-  //printf("   |-ECN Flag : %d\n",(unsigned int)tcph->ece);
-  printf("   |-Urgent Flag          : %d\n",(unsigned int)tcph->urg);
-  printf("   |-Acknowledgement Flag : %d\n",(unsigned int)tcph->ack);
-  printf("   |-Push Flag            : %d\n",(unsigned int)tcph->psh);
-  printf("   |-Reset Flag           : %d\n",(unsigned int)tcph->rst);
-  printf("   |-Synchronise Flag     : %d\n",(unsigned int)tcph->syn);
-  printf("   |-Finish Flag          : %d\n",(unsigned int)tcph->fin);
-  printf("   |-Window         : %d\n",ntohs(tcph->window));
-  printf("   |-Checksum       : %d\n",ntohs(tcph->check));
-  printf("   |-Urgent Pointer : %d\n",tcph->urg_ptr);
-  printf("\n");
-  printf("                        DATA Dump                         ");
-  printf("\n");
+  // printf("   |-Source Port      : %u\n",ntohs(tcph->source));
+  // printf("   |-Destination Port : %u\n",ntohs(tcph->dest));
+  if(ini_seq && ntohl(tcph->seq) != 0){
+    seq = ntohl(tcph->seq);
+    ini_seq = 0;
+  }
+  if(ini_ack && ntohl(tcph->ack_seq) != 0){
+    ack = ntohl(tcph->ack_seq);
+    ini_ack = 0;
+  }
+  if(ntohs(tcph->source) == 5201 && pre_window != ntohs(tcph->window)){
+    printf("Receiver: \n");
+    printf("   |-Acknowledge Number : %u\n",ntohl(tcph->ack_seq) - ack);
+    printf("   |-Window         : %d\n",ntohs(tcph->window));
+    pre_window = ntohs(tcph->window);
+  }
+  else{
+    printf("Sender: \n");
+    printf("   |-Sequence Number    : %u\n",ntohl(tcph->seq) - seq);
+  }
+
+
+  // printf("   |-Header Length      : %d DWORDS or %d BYTES\n" ,(unsigned int)tcph->doff,(unsigned int)tcph->doff*4);
+  // //printf("   |-CWR Flag : %d\n",(unsigned int)tcph->cwr);
+  // //printf("   |-ECN Flag : %d\n",(unsigned int)tcph->ece);
+  // printf("   |-Urgent Flag          : %d\n",(unsigned int)tcph->urg);
+  // printf("   |-Acknowledgement Flag : %d\n",(unsigned int)tcph->ack);
+  // printf("   |-Push Flag            : %d\n",(unsigned int)tcph->psh);
+  // printf("   |-Reset Flag           : %d\n",(unsigned int)tcph->rst);
+  // printf("   |-Synchronise Flag     : %d\n",(unsigned int)tcph->syn);
+  // printf("   |-Finish Flag          : %d\n",(unsigned int)tcph->fin);
+
+  // printf("   |-Checksum       : %d\n",ntohs(tcph->check));
+  // printf("   |-Urgent Pointer : %d\n",tcph->urg_ptr);
+  // printf("\n");
+  // printf("                        DATA Dump                         ");
+  // printf("\n");
 
 }
 
 void process_packet(u_char *args, const struct pcap_pkthdr *pktheader, const u_char *pktdata){
   int size = pktheader->len;
-  printf("pktheader length= %d\n" , size);
+  //printf("pktheader length= %d\n" , size);
 
   struct iphdr *iph = (struct iphdr*)(pktdata + sizeof(struct ethhdr));
 

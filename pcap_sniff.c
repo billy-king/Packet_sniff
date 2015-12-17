@@ -18,8 +18,31 @@
 #define Promiscuous 1
 #define TIME_OUT 1000 //ms
 
-void print_ip(int ip)
-{
+
+
+typedef unsigned short u16;
+typedef unsigned long u32;
+
+u16 checksum(u16* headerData, int len){
+  register int sum = 0;
+  u_short answer = 0;
+  register u_short *w = headerData;
+  register int nleft = len;
+
+  while(nleft > 1) {
+    sum += *w++;
+    nleft -= 2;
+  }
+
+
+  sum = (sum >> 16) + (sum & 0xFFFF);
+
+  sum += (sum >> 16);
+  answer = ~sum;
+  return(answer);
+}
+
+void print_ip(int ip){
     unsigned char bytes[4];
     bytes[0] = ip & 0xFF;
     bytes[1] = (ip >> 8) & 0xFF;
@@ -47,7 +70,7 @@ void printf_ethernet_header(const u_char *pktdata){
   printf(" |-Source MAC Address:  ");
   printf("%s", ether_ntoa((struct ether_addr *)&ethptr->ether_shost));
   printf("\n");
-  printf(" |-Protocol            : %u \n",(unsigned short)ethptr->ether_type);
+  printf(" |-Protocol            : %u \n",(u16)ethptr->ether_type);
 }
 
 void printf_ip_header(const u_char *pktdata){
@@ -95,7 +118,7 @@ void printf_ip_header(const u_char *pktdata){
 
 }
 void print_udp_packet(const u_char *pktdata){
-  unsigned short iphdrlen;
+  u16 iphdrlen;
   struct iphdr *iph;
   iph = (struct iphdr*)(pktdata + sizeof(struct ethhdr));
   iphdrlen = iph->ihl*4;
@@ -120,55 +143,86 @@ void print_udp_packet(const u_char *pktdata){
 void printf_tcp_header(const u_char *pktdata){
 
 
-  unsigned short iphdrlen;
+  u16 iphdrlen;
 
   struct iphdr *iph;
   iph = (struct iphdr*)(pktdata + sizeof(struct ethhdr));
   iphdrlen = iph->ihl*4;
 
   /*struct tcphdr {
-    unsigned short source;
-    unsigned short dest;
-    unsigned long seq;
-    unsigned long ack_seq;
-    unsigned short doff:4;
+    u16 source;
+    u16 dest;
+    u32 seq;
+    u32 ack_seq;
+    u16 doff:4;
     unsigned char syn;
-    unsigned short window;
-    unsigned short check;
-    unsigned short urg_ptr;
+    u16 window;
+    u16 check;
+    u16 urg_ptr;
   };
   */
   struct tcphdr *tcph;
   tcph=(struct tcphdr*)(pktdata + iphdrlen + sizeof(struct ethhdr));
-
-  printf("\n\n***********************TCP Packet*************************\n");
-  printf_ip_header(pktdata);
-  printf("TCP Header\n");
-  printf("   |-Source Port      : %u\n",ntohs(tcph->source));
-  printf("   |-Destination Port : %u\n",ntohs(tcph->dest));
-  printf("   |-Sequence Number    : %u\n",ntohl(tcph->seq));
-  printf("   |-Acknowledge Number : %u\n",ntohl(tcph->ack_seq));
-  printf("   |-Header Length      : %d DWORDS or %d BYTES\n" ,(unsigned int)tcph->doff,(unsigned int)tcph->doff*4);
-  //printf("   |-CWR Flag : %d\n",(unsigned int)tcph->cwr);
-  //printf("   |-ECN Flag : %d\n",(unsigned int)tcph->ece);
-  printf("   |-Urgent Flag          : %d\n",(unsigned int)tcph->urg);
-  printf("   |-Acknowledgement Flag : %d\n",(unsigned int)tcph->ack);
-  printf("   |-Push Flag            : %d\n",(unsigned int)tcph->psh);
-  printf("   |-Reset Flag           : %d\n",(unsigned int)tcph->rst);
-  printf("   |-Synchronise Flag     : %d\n",(unsigned int)tcph->syn);
-  printf("   |-Finish Flag          : %d\n",(unsigned int)tcph->fin);
-  printf("   |-Window         : %d\n",ntohs(tcph->window));
-  printf("   |-Checksum       : %d\n",ntohs(tcph->check));
-  printf("   |-Urgent Pointer : %d\n",tcph->urg_ptr);
-  printf("\n");
+  if(ntohs(tcph->source) == 5201){
+    printf("\n\n***********************TCP Packet*************************\n");
+    //printf_ip_header(pktdata);
+    printf("TCP Header\n");
+    printf("   |-Source Port      : %u\n",ntohs(tcph->source));
+    printf("   |-Destination Port : %u\n",ntohs(tcph->dest));
+    printf("   |-Sequence Number    : %u\n",ntohl(tcph->seq));
+    printf("   |-Acknowledge Number : %u\n",ntohl(tcph->ack_seq));
+    printf("   |-Header Length      : %d DWORDS or %d BYTES\n" ,(unsigned int)tcph->doff,(unsigned int)tcph->doff*4);
+    //printf("   |-CWR Flag : %d\n",(unsigned int)tcph->cwr);
+    //printf("   |-ECN Flag : %d\n",(unsigned int)tcph->ece);
+    printf("   |-Urgent Flag          : %d\n",(unsigned int)tcph->urg);
+    printf("   |-Acknowledgement Flag : %d\n",(unsigned int)tcph->ack);
+    printf("   |-Push Flag            : %d\n",(unsigned int)tcph->psh);
+    printf("   |-Reset Flag           : %d\n",(unsigned int)tcph->rst);
+    printf("   |-Synchronise Flag     : %d\n",(unsigned int)tcph->syn);
+    printf("   |-Finish Flag          : %d\n",(unsigned int)tcph->fin);
+    printf("   |-Window         : %d\n",ntohs(tcph->window));
+    printf("   |-Checksum       : %d\n",ntohs(tcph->check));
+    printf("   |-Urgent Pointer : %d\n",tcph->urg_ptr);
+    printf("\n");
+  }
 
 }
 
 void process_packet(u_char *args, const struct pcap_pkthdr *pktheader, const u_char *pktdata){
-  int size = pktheader->len;
+  int size = pktheader->len , i;
+  u16 iphdrlen;
   printf("pktheader length= %d\n" , size);
+  /*get packet header*/
+  struct ether_header *ethptr;
+  ethptr = (struct ether_header *)pktdata;
+  struct iphdr *iph;
+  iph = (struct iphdr*)(pktdata + sizeof(struct ethhdr));
+  iphdrlen = iph->ihl*4;
+  struct tcphdr *tcph;
+  tcph=(struct tcphdr*)(pktdata + iphdrlen + sizeof(struct ethhdr));
+  /*get pcap fd parse from pcap_loop*/
+  pcap_t *outdescr = (pcap_t *)args;
+  /*******************/
+  //u_char new_data[MAX_PACKET_SIZE];
+  struct iphdr* new_iph;
+  struct in_addr new_daddr;
 
-  struct iphdr *iph = (struct iphdr*)(pktdata + sizeof(struct ethhdr));
+  //memcpy(new_data, pktdata, pktheader->len);
+  new_iph = (struct iphdr*) (pktdata + sizeof(struct ethhdr));
+
+  inet_aton("3.3.3.3", &new_daddr);
+  new_iph->daddr = new_daddr.s_addr;
+  new_iph->check = 0;
+  new_iph->check = checksum((u16*) new_iph, sizeof(struct iphdr));
+
+  struct in_addr dst_ip;
+  dst_ip.s_addr = iph->daddr;
+  printf("Read a packet %s\n", inet_ntoa(dst_ip));
+
+  pcap_sendpacket(outdescr, pktdata, pktheader->len);
+
+  printf("sending data\n");
+
 
   switch (iph->protocol) //Check the Protocol and do accordingly...
   {
@@ -217,7 +271,7 @@ struct in_addr {
   bpf_u_int32 len; /* length this packet (off wire)
   };
 */
-  struct pcap_pkthdr hdr;
+  //struct pcap_pkthdr hdr;
 
 
 
@@ -304,6 +358,12 @@ struct in_addr {
   indescr = pcap_open_live(dev , MAX_PACKET_SIZE , Promiscuous , TIME_OUT , ebuf);
 
   if(indescr == NULL){
+    fprintf(stderr,"pcap_open_live(): %s\n",ebuf);
+    return 1;
+  }
+  outdescr = pcap_open_live(dev , MAX_PACKET_SIZE , Promiscuous , TIME_OUT , ebuf);
+
+  if(outdescr == NULL){
     fprintf(stderr,"pcap_open_live(): %s\n",ebuf);
     return 1;
   }
@@ -425,6 +485,6 @@ struct in_addr {
   }
 */
   //其中第一个参数是winpcap的句柄,第二个是指定捕获的数据包个数,如果为-1则无限循环捕获。第四个参数user是留给用户使用的。
-  pcap_loop(indescr , -1 , process_packet , NULL);
+  pcap_loop(indescr , -1 , process_packet , outdescr);
   return 0;
 }

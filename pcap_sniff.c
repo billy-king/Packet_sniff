@@ -18,6 +18,21 @@
 #define Promiscuous 1
 #define TIME_OUT 1000 //ms
 
+/* ARP Header, (assuming Ethernet+IPv4)            */
+#define ARP_REQUEST 1   /* ARP Request             */
+#define ARP_REPLY 2     /* ARP Reply               */
+typedef struct arphdr {
+    u_int16_t htype;    /* Hardware Type           */
+    u_int16_t ptype;    /* Protocol Type           */
+    u_char hlen;        /* Hardware Address Length */
+    u_char plen;        /* Protocol Address Length */
+    u_int16_t oper;     /* Operation Code          */
+    u_char sha[6];      /* Sender hardware address */
+    u_char spa[4];      /* Sender IP address       */
+    u_char tha[6];      /* Target hardware address */
+    u_char tpa[4];      /* Target IP address       */
+}arphdr_t;
+
 
 
 typedef unsigned short u16;
@@ -210,7 +225,10 @@ void process_packet(u_char *args, const struct pcap_pkthdr *pktheader, const u_c
   //memcpy(new_data, pktdata, pktheader->len);
   new_iph = (struct iphdr*) (pktdata + sizeof(struct ethhdr));
 
-  inet_aton("3.3.3.3", &new_daddr);
+  if(ntohs(tcph->source) == 5001)
+    inet_aton("172.17.0.4", &new_daddr);
+  else
+    inet_aton("172.17.0.2", &new_daddr);
   new_iph->daddr = new_daddr.s_addr;
   new_iph->check = 0;
   new_iph->check = checksum((u16*) new_iph, sizeof(struct iphdr));

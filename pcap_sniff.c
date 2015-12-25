@@ -18,10 +18,16 @@
 #define Promiscuous 1
 #define TIME_OUT 1000 //ms
 
+struct sockaddr_in source,dest;
+int packetCount = 0;
+
+typedef unsigned short u16;
+typedef unsigned long u32;
+
 /* ARP Header, (assuming Ethernet+IPv4)            */
 #define ARP_REQUEST 1   /* ARP Request             */
 #define ARP_REPLY 2     /* ARP Reply               */
-typedef struct arphdr {
+struct arph {
     u_int16_t htype;    /* Hardware Type           */
     u_int16_t ptype;    /* Protocol Type           */
     u_char hlen;        /* Hardware Address Length */
@@ -31,12 +37,7 @@ typedef struct arphdr {
     u_char spa[4];      /* Sender IP address       */
     u_char tha[6];      /* Target hardware address */
     u_char tpa[4];      /* Target IP address       */
-}arphdr_t;
-
-
-
-typedef unsigned short u16;
-typedef unsigned long u32;
+};
 
 u16 checksum(u16* headerData, int len){
   register int sum = 0;
@@ -55,6 +56,93 @@ u16 checksum(u16* headerData, int len){
   sum += (sum >> 16);
   answer = ~sum;
   return(answer);
+}
+
+uint16_t
+tcp4_checksum (struct ip iphdr, struct tcphdr tcphdr)
+{
+  uint16_t svalue;
+  char buf[IP_MAXPACKET], cvalue;
+  char *ptr;
+  int chksumlen = 0;
+
+  // ptr points to beginning of buffer buf
+  ptr = &buf[0];
+
+  // Copy source IP address into buf (32 bits)
+  memcpy (ptr, &iphdr.ip_src.s_addr, sizeof (iphdr.ip_src.s_addr));
+  ptr += sizeof (iphdr.ip_src.s_addr);
+  chksumlen += sizeof (iphdr.ip_src.s_addr);
+
+  // Copy destination IP address into buf (32 bits)
+  memcpy (ptr, &iphdr.ip_dst.s_addr, sizeof (iphdr.ip_dst.s_addr));
+  ptr += sizeof (iphdr.ip_dst.s_addr);
+  chksumlen += sizeof (iphdr.ip_dst.s_addr);
+
+  // Copy zero field to buf (8 bits)
+  *ptr = 0; ptr++;
+  chksumlen += 1;
+
+  // Copy transport layer protocol to buf (8 bits)
+  memcpy (ptr, &iphdr.ip_p, sizeof (iphdr.ip_p));
+  ptr += sizeof (iphdr.ip_p);
+  chksumlen += sizeof (iphdr.ip_p);
+
+  // Copy TCP length to buf (16 bits)
+  svalue = htons (sizeof (tcphdr));
+  memcpy (ptr, &svalue, sizeof (svalue));
+  ptr += sizeof (svalue);
+  chksumlen += sizeof (svalue);
+
+  // Copy TCP source port to buf (16 bits)
+  memcpy (ptr, &tcphdr.th_sport, sizeof (tcphdr.th_sport));
+  ptr += sizeof (tcphdr.th_sport);
+  chksumlen += sizeof (tcphdr.th_sport);
+
+  // Copy TCP destination port to buf (16 bits)
+  memcpy (ptr, &tcphdr.th_dport, sizeof (tcphdr.th_dport));
+  ptr += sizeof (tcphdr.th_dport);
+  chksumlen += sizeof (tcphdr.th_dport);
+
+  // Copy sequence number to buf (32 bits)
+  memcpy (ptr, &tcphdr.th_seq, sizeof (tcphdr.th_seq));
+  ptr += sizeof (tcphdr.th_seq);
+  chksumlen += sizeof (tcphdr.th_seq);
+
+  // Copy acknowledgement number to buf (32 bits)
+  memcpy (ptr, &tcphdr.th_ack, sizeof (tcphdr.th_ack));
+  ptr += sizeof (tcphdr.th_ack);
+  chksumlen += sizeof (tcphdr.th_ack);
+
+  // Copy data offset to buf (4 bits) and
+  // copy reserved bits to buf (4 bits)
+  cvalue = (tcphdr.th_off << 4) + tcphdr.th_x2;
+  memcpy (ptr, &cvalue, sizeof (cvalue));
+  ptr += sizeof (cvalue);
+  chksumlen += sizeof (cvalue);
+
+  // Copy TCP flags to buf (8 bits)
+  memcpy (ptr, &tcphdr.th_flags, sizeof (tcphdr.th_flags));
+  ptr += sizeof (tcphdr.th_flags);
+  chksumlen += sizeof (tcphdr.th_flags);
+
+  // Copy TCP window size to buf (16 bits)
+  memcpy (ptr, &tcphdr.th_win, sizeof (tcphdr.th_win));
+  ptr += sizeof (tcphdr.th_win);
+  chksumlen += sizeof (tcphdr.th_win);
+
+  // Copy TCP checksum to buf (16 bits)
+  // Zero, since we don't know it yet
+  *ptr = 0; ptr++;
+  *ptr = 0; ptr++;
+  chksumlen += 2;
+
+  // Copy urgent pointer to buf (16 bits)
+  memcpy (ptr, &tcphdr.th_urp, sizeof (tcphdr.th_urp));
+  ptr += sizeof (tcphdr.th_urp);
+  chksumlen += sizeof (tcphdr.th_urp);
+
+  return checksum ((uint16_t *) buf, chksumlen);
 }
 
 void print_ip(int ip){
@@ -85,7 +173,7 @@ void printf_ethernet_header(const u_char *pktdata){
   printf(" |-Source MAC Address:  ");
   printf("%s", ether_ntoa((struct ether_addr *)&ethptr->ether_shost));
   printf("\n");
-  printf(" |-Protocol            : %u \n",(u16)ethptr->ether_type);
+  printf(" |-Protocol            : %u \n",ethptr->ether_type);
 }
 
 void printf_ip_header(const u_char *pktdata){
@@ -115,6 +203,13 @@ void printf_ip_header(const u_char *pktdata){
   struct iphdr *iph;
   iph = (struct iphdr*)(pktdata + sizeof(struct ethhdr));
   printf_ethernet_header(pktdata);
+
+  memset(&source, 0, sizeof(source));
+  source.sin_addr.s_addr = iph->saddr;
+
+  memset(&dest, 0, sizeof(dest));
+  dest.sin_addr.s_addr = iph->daddr;
+
   printf("\n");
   printf("IP Header\n");
   printf("   |-IP Version        : %d\n",(unsigned int)iph->version);
@@ -128,10 +223,47 @@ void printf_ip_header(const u_char *pktdata){
   printf("   |-TTL      : %d\n",(unsigned int)iph->ttl);
   printf("   |-Protocol : %d\n",(unsigned int)iph->protocol);
   printf("   |-Checksum : %d\n",ntohs(iph->check));
-  printf("   |-Source IP        : "); print_ip(ntohl(iph->saddr));
-  printf("   |-Destination IP   : "); print_ip(ntohl(iph->daddr));
+  printf("   |-Source IP        : %s\n" ,inet_ntoa(source.sin_addr));
+  printf("   |-Destination IP   : %s\n" ,inet_ntoa(dest.sin_addr));
 
 }
+void print_arp_packet(const u_char *pktdata){
+  /*struct arphdr {
+     u_int16_t htype;     Hardware Type
+     u_int16_t ptype;     Protocol Type
+     u_char hlen;         Hardware Address Length
+     u_char plen;         Protocol Address Length
+     u_int16_t oper;      Operation Code
+     u_char sha[6];       Sender hardware address
+     u_char spa[4];       Sender IP address
+     u_char tha[6];       Target hardware address
+     u_char tpa[4];       Target IP address
+  }*/
+  struct arph *arph;
+  arph = (struct arph *)(pktdata + 14);
+
+  // struct sockaddr_in sender,target;
+  // memset(&sender, 0, sizeof(sender));
+  // sender.sin_addr.s_addr = arph->spa;
+
+  // memset(&target, 0, sizeof(target));
+  // target.sin_addr.s_addr = arph->tpa;
+  printf("\n\n***********************ARP Packet*************************\n");
+  printf_ethernet_header(pktdata);
+  printf("ARP Header\n");
+  printf("   |-Operation: %s\n", (ntohs(arph->oper) == ARP_REQUEST)? "ARP Request" : "ARP Reply");
+  printf("   |-Sender MAC: %s\n" , ether_ntoa((struct ether_addr *)arph->sha));
+
+  printf("   |-Sender IP: %d.%d.%d.%d\n" , arph->spa[0],arph->spa[1],arph->spa[2],arph->spa[3]);
+
+  printf("   |-Target MAC: %s\n" , ether_ntoa((struct ether_addr *)arph->tha));
+
+  printf("   |-Target IP: %d.%d.%d.%d\n" , arph->tpa[0],arph->tpa[1],arph->tpa[2],arph->tpa[3]);
+
+  printf("\n");
+
+}
+
 void print_udp_packet(const u_char *pktdata){
   u16 iphdrlen;
   struct iphdr *iph;
@@ -178,9 +310,8 @@ void printf_tcp_header(const u_char *pktdata){
   */
   struct tcphdr *tcph;
   tcph=(struct tcphdr*)(pktdata + iphdrlen + sizeof(struct ethhdr));
-  if(ntohs(tcph->source) == 5201){
     printf("\n\n***********************TCP Packet*************************\n");
-    //printf_ip_header(pktdata);
+    printf_ip_header(pktdata);
     printf("TCP Header\n");
     printf("   |-Source Port      : %u\n",ntohs(tcph->source));
     printf("   |-Destination Port : %u\n",ntohs(tcph->dest));
@@ -199,68 +330,98 @@ void printf_tcp_header(const u_char *pktdata){
     printf("   |-Checksum       : %d\n",ntohs(tcph->check));
     printf("   |-Urgent Pointer : %d\n",tcph->urg_ptr);
     printf("\n");
-  }
+
+}
+
+void packet_send(const u_char *pktdata , pcap_t *outdescr , int pkhl){
+  struct iphdr* new_iph;
+  new_iph = (struct iphdr*) (pktdata + sizeof(struct ethhdr));
+
+  struct iphdr *iph;
+  iph = (struct iphdr*)(pktdata + sizeof(struct ethhdr));
+  u16 iphdrlen;
+  iphdrlen = iph->ihl*4;
+  // struct in_addr new_addr;
+  //   //inet_aton("172.17.0.4", &new_addr);
+  //   //new_iph->saddr = new_addr.s_addr;
+  //   inet_aton("172.17.0.5", &new_addr);
+  //   new_iph->daddr = new_addr.s_addr;
+  //   new_iph->check = 0;
+  //   new_iph->check = checksum((u16*) new_iph, sizeof(struct iphdr));
+  // struct in_addr dst_ip;
+  // dst_ip.s_addr = iph->daddr;
+  // printf("Read a packet %s\n", inet_ntoa(dst_ip));
+  struct tcphdr* tcph;
+  tcph=(struct tcphdr*)(pktdata + iphdrlen + sizeof(struct ethhdr));
+  struct tcphdr* new_tcph;
+  new_tcph=(struct tcphdr*)(pktdata + iphdrlen + sizeof(struct ethhdr));
+    //new_tcph->window = htons(1000);
+  struct in_addr new_addr;
+  // inet_aton("172.17.0.4", &new_addr);
+  // new_iph->saddr = new_addr.s_addr;
+  // inet_aton("192.168.197.131", &new_addr);
+  // new_iph->daddr = new_addr.s_addr;
+  // new_iph->check = 0;
+  // new_iph->check = checksum((u16*)  new_iph, sizeof(struct iphdr));
+  // //new_tcph->check = tcp4_checksum(iph , new_tcph);
+  struct in_addr dst_ip;
+  dst_ip.s_addr = iph->daddr;
+  printf("Read a packet %s\n", inet_ntoa(dst_ip));
+  //printf("Read a TCP packet window size : %d\n", ntohs(tcph->window));
+
+  pcap_sendpacket(outdescr, pktdata, pkhl);
+
+  //printf("sending data\n");
 
 }
 
 void process_packet(u_char *args, const struct pcap_pkthdr *pktheader, const u_char *pktdata){
   int size = pktheader->len , i;
-  u16 iphdrlen;
-  printf("pktheader length= %d\n" , size);
+  //printf("pktheader length= %d\n" , size);
   /*get packet header*/
   struct ether_header *ethptr;
   ethptr = (struct ether_header *)pktdata;
   struct iphdr *iph;
   iph = (struct iphdr*)(pktdata + sizeof(struct ethhdr));
-  iphdrlen = iph->ihl*4;
-  struct tcphdr *tcph;
-  tcph=(struct tcphdr*)(pktdata + iphdrlen + sizeof(struct ethhdr));
   /*get pcap fd parse from pcap_loop*/
   pcap_t *outdescr = (pcap_t *)args;
   /*******************/
   //u_char new_data[MAX_PACKET_SIZE];
-  struct iphdr* new_iph;
-  struct in_addr new_daddr;
+  if(ethptr->ether_type == 8){
+    switch (iph->protocol) //Check the Protocol and do accordingly...
+    {
+        case 1:  //ICMP Protocol
+            //print_arp_packet(pktdata);
+            packetCount++;
+            packet_send(pktdata , outdescr , size);
+            break;
 
-  //memcpy(new_data, pktdata, pktheader->len);
-  new_iph = (struct iphdr*) (pktdata + sizeof(struct ethhdr));
+        case 2:  //IGMP Protocol
+            packetCount++;
+            break;
 
-  if(ntohs(tcph->source) == 5001)
-    inet_aton("172.17.0.4", &new_daddr);
-  else
-    inet_aton("172.17.0.2", &new_daddr);
-  new_iph->daddr = new_daddr.s_addr;
-  new_iph->check = 0;
-  new_iph->check = checksum((u16*) new_iph, sizeof(struct iphdr));
+        case 6:  //TCP Protocol
+            packetCount++;
+            //printf_tcp_header(pktdata);
+            packet_send(pktdata , outdescr , size);
+            break;
 
-  struct in_addr dst_ip;
-  dst_ip.s_addr = iph->daddr;
-  printf("Read a packet %s\n", inet_ntoa(dst_ip));
+        case 17: //UDP Protocol
+            packetCount++;
+            //print_udp_packet(pktdata);
+            break;
 
-  pcap_sendpacket(outdescr, pktdata, pktheader->len);
-
-  printf("sending data\n");
-
-
-  switch (iph->protocol) //Check the Protocol and do accordingly...
-  {
-      case 1:  //ICMP Protocol
-          break;
-
-      case 2:  //IGMP Protocol
-          break;
-
-      case 6:  //TCP Protocol
-          printf_tcp_header(pktdata);
-          break;
-
-      case 17: //UDP Protocol
-          print_udp_packet(pktdata);
-          break;
-
-      default: //Some Other Protocol like ARP etc.
-          break;
+        default: //Some Other Protocol.
+            packetCount++;
+            break;
+    }
   }
+  else if(ethptr->ether_type == 1544){
+    packetCount++;
+    //print_arp_packet(pktdata);
+    packet_send(pktdata , outdescr , size);
+  }
+  //printf("Packet total sniffer : %d \n" , packetCount);
 
 }
 
@@ -385,6 +546,7 @@ struct in_addr {
     fprintf(stderr,"pcap_open_live(): %s\n",ebuf);
     return 1;
   }
+  pcap_setdirection(indescr, PCAP_D_IN);
 /*pcap_next detail
   u_char *pcap_next(pcap_t *p,struct pcap_pkthdr *h)
        so just pass in the descriptor we got from
